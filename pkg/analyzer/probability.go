@@ -1,7 +1,7 @@
 package analyzer
 
 import (
-	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -17,27 +17,15 @@ type ProbabilityEstimator struct {
 
 // NewProbabilityEstimator loads probabilities from dictionary path.
 func NewProbabilityEstimator(dictPath string) (*ProbabilityEstimator, error) {
-	file := filepath.Join(dictPath, "p_t_given_w.json")
-	data := map[string]int{}
-	if b, err := os.ReadFile(file); err == nil {
-		if err := json.Unmarshal(b, &data); err != nil {
-			return nil, err
+	file := filepath.Join(dictPath, "p_t_given_w.intdawg")
+	probs, err := dawg.LoadConditionalProbDist(file)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, os.ErrNotExist
 		}
-		entries := make([]dawg.ProbEntry, 0, len(data))
-		for k, v := range data {
-			// key format "word:tag"
-			for i := 0; i < len(k); i++ {
-				if k[i] == ':' {
-					word := k[:i]
-					tag := k[i+1:]
-					entries = append(entries, dawg.ProbEntry{Word: word, Tag: tag, Prob: float64(v) / dawg.MULTIPLIER})
-					break
-				}
-			}
-		}
-		return &ProbabilityEstimator{probs: dawg.NewConditionalProbDist(entries)}, nil
+		return nil, err
 	}
-	return nil, os.ErrNotExist
+	return &ProbabilityEstimator{probs: probs}, nil
 }
 
 // ApplyToParses replaces scores with conditional probabilities.
