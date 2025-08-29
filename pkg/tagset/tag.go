@@ -2,6 +2,7 @@ package tagset
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -95,6 +96,104 @@ func (t *Tag) IsProductive() bool {
 	return true
 }
 
+// UpdatedGrammemes returns new grammemes set with required grammemes added and
+// incompatible ones removed.
+func (t *Tag) UpdatedGrammemes(required []string) ([]string, error) {
+	newSet := make(map[string]struct{}, len(t.gramSet))
+	for g := range t.gramSet {
+		newSet[g] = struct{}{}
+	}
+	for _, g := range required {
+		if !GrammemeIsKnown(g) {
+			return nil, fmt.Errorf("unknown grammeme: %s", g)
+		}
+		for _, cat := range grammemeCategories {
+			if _, ok := cat[g]; ok {
+				for cg := range cat {
+					delete(newSet, cg)
+				}
+				break
+			}
+		}
+		newSet[g] = struct{}{}
+	}
+	res := make([]string, 0, len(newSet))
+	for g := range newSet {
+		res = append(res, g)
+	}
+	sort.Strings(res)
+	return res, nil
+}
+
+var numeralAgreementGrammemes = [][]string{
+	{"sing", "nomn"},
+	{"sing", "accs"},
+	{"sing", "gent"},
+	{"plur", "nomn"},
+	{"plur", "gent"},
+}
+
+// NumeralAgreementGrammemes returns grammemes for agreement with a given number.
+func (t *Tag) NumeralAgreementGrammemes(num int) []string {
+	var index int
+	if num%10 == 1 && num%100 != 11 {
+		index = 0
+	} else if num%10 >= 2 && num%10 <= 4 && (num%100 < 10 || num%100 >= 20) {
+		index = 1
+	} else {
+		index = 2
+	}
+
+	pos := t.POS()
+	if pos != "NOUN" && pos != "ADJF" && pos != "PRTF" {
+		return []string{}
+	}
+	c := t.Case()
+	if pos == "NOUN" && c != "nomn" && c != "accs" && c != "" {
+		if index == 0 {
+			return []string{"sing", c}
+		}
+		return []string{"plur", c}
+	} else if index == 0 {
+		if c == "nomn" {
+			return numeralAgreementGrammemes[0]
+		}
+		return numeralAgreementGrammemes[1]
+	} else if pos == "NOUN" && index == 1 {
+		return numeralAgreementGrammemes[2]
+	} else if (pos == "ADJF" || pos == "PRTF") && t.Gender() == "femn" && index == 1 {
+		return numeralAgreementGrammemes[3]
+	}
+	return numeralAgreementGrammemes[4]
+}
+
+var rareCases = map[string]string{
+	"gen1": "gent",
+	"gen2": "gent",
+	"acc1": "accs",
+	"acc2": "accs",
+	"loc1": "loct",
+	"loc2": "loct",
+	"voct": "nomn",
+}
+
+// FixRareCases replaces rare case grammemes with common ones.
+func FixRareCases(gs []string) []string {
+	resSet := make(map[string]struct{}, len(gs))
+	for _, g := range gs {
+		if repl, ok := rareCases[g]; ok {
+			g = repl
+		}
+		resSet[g] = struct{}{}
+	}
+	res := make([]string, 0, len(resSet))
+	for g := range resSet {
+		res = append(res, g)
+	}
+	sort.Strings(res)
+	return res
+}
+
 func newSet(items ...string) map[string]struct{} {
 	m := make(map[string]struct{}, len(items))
 	for _, it := range items {
@@ -164,13 +263,14 @@ func Cyr2Lat(tag string) string { return TranslateTag(tag, CyrToLat) }
 func Lat2Cyr(tag string) string { return TranslateTag(tag, LatToCyr) }
 
 func init() {
-	categories := []map[string]struct{}{
-		PARTS_OF_SPEECH, ANIMACY, GENDERS, NUMBERS, CASES,
-		ASPECTS, TRANSITIVITY, PERSONS, TENSES, MOODS, VOICES, INVOLVEMENT,
-	}
-	for _, cat := range categories {
+	for _, cat := range grammemeCategories {
 		for g := range cat {
 			AddGrammemeToKnown(g, g, true)
 		}
 	}
+}
+
+var grammemeCategories = []map[string]struct{}{
+	PARTS_OF_SPEECH, ANIMACY, GENDERS, NUMBERS, CASES,
+	ASPECTS, TRANSITIVITY, PERSONS, TENSES, MOODS, VOICES, INVOLVEMENT,
 }
