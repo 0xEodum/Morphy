@@ -19,6 +19,14 @@ func NewHyphenSeparatedParticleAnalyzer(particles []string) *HyphenSeparatedPart
 	return &HyphenSeparatedParticleAnalyzer{Particles: particles, ScoreMultiplier: 0.9}
 }
 
+// hyphenParticleMethod stores particle information in methods stack.
+type hyphenParticleMethod struct {
+	Analyzer *HyphenSeparatedParticleAnalyzer
+	Particle string
+}
+
+func (m hyphenParticleMethod) Unit() AnalyzerUnit { return m.Analyzer }
+
 func (h *HyphenSeparatedParticleAnalyzer) Parse(word, wordLower string, seen map[string]struct{}) []analysis.Parse {
 	res := []analysis.Parse{}
 	for _, part := range h.Particles {
@@ -31,14 +39,12 @@ func (h *HyphenSeparatedParticleAnalyzer) Parse(word, wordLower string, seen map
 		}
 		parses := h.Morph.Parse(base)
 		for _, p := range parses {
-			method := struct {
-				Analyzer *HyphenSeparatedParticleAnalyzer
-				Particle string
-			}{h, part}
+			method := hyphenParticleMethod{Analyzer: h, Particle: part}
 			stack := append(append([]interface{}{}, p.MethodsStack...), method)
 			np := analysis.NewParse(p.Word+part, p.Tag, p.NormalForm+part, p.Score*h.ScoreMultiplier, stack)
 			AddParseIfNotSeen(np, &res, seen)
 		}
+		// If a word ends with one of the particles, it can't end with another.
 		break
 	}
 	return res
@@ -61,9 +67,57 @@ func (h *HyphenSeparatedParticleAnalyzer) Tag(word, wordLower string, seen map[s
 }
 
 func (h *HyphenSeparatedParticleAnalyzer) GetLexeme(p analysis.Parse) []analysis.Parse {
-	return []analysis.Parse{p}
+	if len(p.MethodsStack) == 0 {
+		return []analysis.Parse{p}
+	}
+	method, ok := p.MethodsStack[len(p.MethodsStack)-1].(hyphenParticleMethod)
+	if !ok {
+		return []analysis.Parse{p}
+	}
+
+	base := WithoutLastMethod(WithoutFixedSuffix(p, len(method.Particle)))
+	if len(base.MethodsStack) == 0 {
+		base = WithSuffix(base, method.Particle)
+		base = AppendMethod(base, method)
+		return []analysis.Parse{base}
+	}
+
+	if prev, ok := base.MethodsStack[len(base.MethodsStack)-1].(Method); ok {
+		lexeme := prev.Unit().GetLexeme(base)
+		res := make([]analysis.Parse, len(lexeme))
+		for i, lp := range lexeme {
+			lp = WithSuffix(lp, method.Particle)
+			lp = AppendMethod(lp, method)
+			res[i] = lp
+		}
+		return res
+	}
+	base = WithSuffix(base, method.Particle)
+	base = AppendMethod(base, method)
+	return []analysis.Parse{base}
 }
-func (h *HyphenSeparatedParticleAnalyzer) Normalized(p analysis.Parse) analysis.Parse { return p }
+
+func (h *HyphenSeparatedParticleAnalyzer) Normalized(p analysis.Parse) analysis.Parse {
+	if len(p.MethodsStack) == 0 {
+		return p
+	}
+	method, ok := p.MethodsStack[len(p.MethodsStack)-1].(hyphenParticleMethod)
+	if !ok {
+		return p
+	}
+	base := WithoutLastMethod(WithoutFixedSuffix(p, len(method.Particle)))
+	if len(base.MethodsStack) == 0 {
+		base = WithSuffix(base, method.Particle)
+		return AppendMethod(base, method)
+	}
+	if prev, ok := base.MethodsStack[len(base.MethodsStack)-1].(Method); ok {
+		norm := prev.Unit().Normalized(base)
+		norm = WithSuffix(norm, method.Particle)
+		return AppendMethod(norm, method)
+	}
+	base = WithSuffix(base, method.Particle)
+	return AppendMethod(base, method)
+}
 
 // HyphenAdverbAnalyzer detects adverbs starting with "по-".
 type HyphenAdverbAnalyzer struct {
